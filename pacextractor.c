@@ -1,4 +1,3 @@
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -51,31 +50,31 @@ void getString(int16_t* baseString, char* resString) {
 
 int main(int argc, char** argv) {
     if(argc < 2) {
-        printf("command format:\n   capextractor <firmware name>.pac");
-        exit(EXIT_FAILURE);
+        printf("Usage:\n  capextractor <firmware_file>.pac\n");
+                exit(EXIT_FAILURE);
     }
     
     int fd = open(argv[1], O_RDONLY);
     if (fd == -1) {
-        printf("file %s is not find", argv[1]);
+        printf("Error: Unable to open file '%s'. Please check if the file exists.\n", argv[1]);
         exit(EXIT_FAILURE);
     }
     
-//    fseek(fd, 0, SEEK_END);
-//    int firmwareSize = (fd);
-//    fseek(fd, 0, SEEK_SET);
+    // fseek(fd, 0, SEEK_END);
+    // int firmwareSize = (fd);
+    // fseek(fd, 0, SEEK_SET);
     struct stat st;
     stat(argv[1], &st);
     int firmwareSize = st.st_size;
     if(firmwareSize < sizeof(PacHeader)) {
-        printf("file %s is not firmware", argv[1]);
+        printf("Error: The file '%s' is too small to be a valid firmware file. Please check the file.\n", argv[1]);
         exit(EXIT_FAILURE);
     }
     
     PacHeader pacHeader;
-    size_t rb =read(fd, &pacHeader, sizeof(PacHeader));
+    size_t rb = read(fd, &pacHeader, sizeof(PacHeader));
     if(rb <= 0) {
-        printf("Error while parsing PAC header");
+        printf("Error: Failed to read the PAC header from the file '%s'. The file may be corrupted.\n", argv[1]);
         exit(EXIT_FAILURE);
     }
 
@@ -89,17 +88,17 @@ int main(int argc, char** argv) {
     for(i = 0; i < pacHeader.partitionCount; i++) {
         lseek(fd, curPos, SEEK_SET);
         uint32_t length;
-        rb =read(fd, &length, sizeof(uint32_t));
+        rb = read(fd, &length, sizeof(uint32_t));
         if(rb <= 0) {
-            printf("Partition header error");
+            printf("Error: Failed to read the partition header length.\n");
             exit(EXIT_FAILURE);
         }
         partHeaders[i] = malloc(length);
         lseek(fd, curPos, SEEK_SET);
         curPos += length;
-        rb =read(fd, partHeaders[i], length);
+        rb = read(fd, partHeaders[i], length);
         if(rb <= 0) {
-            printf("Partition header error");
+            printf("Error: Failed to read the partition header.\n");
             exit(EXIT_FAILURE);
         }
         getString(partHeaders[i]->partitionName, buffer);
@@ -121,14 +120,14 @@ int main(int argc, char** argv) {
         while(dataSizeLeft > 0) {
             uint32_t copyLength = (dataSizeLeft > 256) ? 256 : dataSizeLeft;
             dataSizeLeft -= copyLength;
-            rb =read(fd, buffer, copyLength);
+            rb = read(fd, buffer, copyLength);
             if(rb != copyLength) {
-                printf("Partition image extraction error");
+                printf("Error: Failed to extract partition data.\n");
                 exit(EXIT_FAILURE);
             }
             rb = write(fd_new, buffer, copyLength);
             if(rb != copyLength) {
-                printf("Partition image extraction error");
+                printf("Error: Failed to write partition data.\n");
                 exit(EXIT_FAILURE);
             }
             printf("\r\t%02d%%", (uint64_t)100 - (uint64_t)100*dataSizeLeft/partHeaders[i]->partitionSize);
