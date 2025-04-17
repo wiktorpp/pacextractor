@@ -51,7 +51,7 @@ void getString(int16_t* baseString, char* resString) {
 int main(int argc, char** argv) {
     if(argc < 2) {
         printf("Usage:\n  capextractor <firmware_file>.pac\n");
-                exit(EXIT_FAILURE);
+        exit(EXIT_FAILURE);
     }
     
     int fd = open(argv[1], O_RDONLY);
