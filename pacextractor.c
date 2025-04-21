@@ -32,129 +32,164 @@ typedef struct {
     int32_t dataArray[];
 } PartitionHeader;
 
-void getString(int16_t* baseString, char* resString) {
-    if(*baseString == 0) {
-        *resString = 0;
+void getString(int16_t* source, char* destination) {
+    if (*source == 0) {
+        *destination = 0;
         return;
     }
     int length = 0;
-    do {
-        *resString = 0xFF & *baseString;
-        resString++;
-        baseString++;
-        if(++length > 256)
-            break;
-    } while(baseString > 0);
-    *resString = 0;
+    while (*source > 0 && length < 256) {
+        *destination = 0xFF & *source;
+        destination++;
+        source++;
+        length++;
+    }
+    *destination = 0;
 }
 
 int main(int argc, char** argv) {
-    if(argc < 2) {
-        printf("Usage:\n  capextractor <firmware_file>.pac [destination_directory]\n");
+    if (argc < 2) {
+        printf("Usage:\n  pacextractor <firmware_file>.pac [output_directory]\n");
+        printf("Extracts partitions from a Spreadtrum/Unisoc firmware file.\n");
         exit(EXIT_FAILURE);
     }
 
-    const char* destination = (argc >= 3) ? argv[2] : ".";
-    struct stat st;
-    if (stat(destination, &st) == -1 || !S_ISDIR(st.st_mode)) {
-        printf("Error: Destination '%s' is not a valid directory.\n", destination);
+    const char* outputDirectory = (argc >= 3) ? argv[2] : ".";
+    struct stat directoryStat;
+    if (stat(outputDirectory, &directoryStat) == -1 || !S_ISDIR(directoryStat.st_mode)) {
+        printf("Error: The specified output directory '%s' does not exist or is invalid.\n", outputDirectory);
         exit(EXIT_FAILURE);
     }
 
-    int fd = open(argv[1], O_RDONLY);
-    if (fd == -1) {
-        printf("Error: Unable to open file '%s'. Please check if the file exists.\n", argv[1]);
-        exit(EXIT_FAILURE);
-    }
-    
-    if (stat(argv[1], &st) == -1) {
-        printf("Error: Unable to stat file '%s'.\n", argv[1]);
-        exit(EXIT_FAILURE);
-    }
-    int firmwareSize = st.st_size;
-    if(firmwareSize < sizeof(PacHeader)) {
-        printf("Error: The file '%s' is too small to be a valid firmware file. Please check the file.\n", argv[1]);
-        exit(EXIT_FAILURE);
-    }
-    
-    PacHeader pacHeader;
-    size_t rb = read(fd, &pacHeader, sizeof(PacHeader));
-    if(rb <= 0) {
-        printf("Error: Failed to read the PAC header from the file '%s'. The file may be corrupted.\n", argv[1]);
+    int firmwareFile = open(argv[1], O_RDONLY);
+    if (firmwareFile == -1) {
+        perror("Error: Unable to open the firmware file");
         exit(EXIT_FAILURE);
     }
 
-    char buffer[256];
-    char buffer1[256];
-    getString(pacHeader.firmwareName, buffer);
-    printf("Firmware name: %s\n", buffer);
-    uint32_t curPos = pacHeader.partitionsListStart;
-    PartitionHeader** partHeaders = malloc(sizeof(PartitionHeader**)*pacHeader.partitionCount);
-    int i;
-    for(i = 0; i < pacHeader.partitionCount; i++) {
-        lseek(fd, curPos, SEEK_SET);
-        uint32_t length;
-        rb = read(fd, &length, sizeof(uint32_t));
-        if(rb <= 0) {
-            printf("Error: Failed to read the partition header length.\n");
+    struct stat firmwareStat;
+    if (fstat(firmwareFile, &firmwareStat) == -1) {
+        perror("Error: Unable to retrieve firmware file information");
+        close(firmwareFile);
+        exit(EXIT_FAILURE);
+    }
+
+    if (firmwareStat.st_size < sizeof(PacHeader)) {
+        printf("Error: The firmware file '%s' is too small to be valid. Please verify the file.\n", argv[1]);
+        close(firmwareFile);
+        exit(EXIT_FAILURE);
+    }
+
+    PacHeader firmwareHeader;
+    if (read(firmwareFile, &firmwareHeader, sizeof(PacHeader)) <= 0) {
+        perror("Error: Failed to read the firmware header");
+        close(firmwareFile);
+        exit(EXIT_FAILURE);
+    }
+
+    char firmwareName[256], partitionFileName[256];
+    getString(firmwareHeader.firmwareName, firmwareName);
+    printf("Firmware Name: %s\n", firmwareName);
+
+    uint32_t partitionOffset = firmwareHeader.partitionsListStart;
+    PartitionHeader** partitionHeaders = malloc(sizeof(PartitionHeader*) * firmwareHeader.partitionCount);
+    if (!partitionHeaders) {
+        perror("Error: Memory allocation failed for partition headers");
+        close(firmwareFile);
+        exit(EXIT_FAILURE);
+    }
+
+    for (int partitionIndex = 0; partitionIndex < firmwareHeader.partitionCount; partitionIndex++) {
+        lseek(firmwareFile, partitionOffset, SEEK_SET);
+        uint32_t partitionHeaderLength;
+        if (read(firmwareFile, &partitionHeaderLength, sizeof(uint32_t)) <= 0) {
+            perror("Error: Failed to read the partition header length");
+            free(partitionHeaders);
+            close(firmwareFile);
             exit(EXIT_FAILURE);
         }
-        partHeaders[i] = malloc(length);
-        lseek(fd, curPos, SEEK_SET);
-        curPos += length;
-        rb = read(fd, partHeaders[i], length);
-        if(rb <= 0) {
-            printf("Error: Failed to read the partition header.\n");
+
+        partitionHeaders[partitionIndex] = malloc(partitionHeaderLength);
+        if (!partitionHeaders[partitionIndex]) {
+            perror("Error: Memory allocation failed for a partition header");
+            free(partitionHeaders);
+            close(firmwareFile);
             exit(EXIT_FAILURE);
         }
-        getString(partHeaders[i]->partitionName, buffer);
-        getString(partHeaders[i]->fileName, buffer1);
-        printf("Partition name: %s\n\twith file name: %s\n\twith size %u\n", buffer, buffer1, partHeaders[i]->partitionSize);
+
+        lseek(firmwareFile, partitionOffset, SEEK_SET);
+        partitionOffset += partitionHeaderLength;
+        if (read(firmwareFile, partitionHeaders[partitionIndex], partitionHeaderLength) <= 0) {
+            perror("Error: Failed to read the partition header");
+            free(partitionHeaders[partitionIndex]);
+            free(partitionHeaders);
+            close(firmwareFile);
+            exit(EXIT_FAILURE);
+        }
+
+        getString(partitionHeaders[partitionIndex]->partitionName, firmwareName);
+        getString(partitionHeaders[partitionIndex]->fileName, partitionFileName);
+        printf("Partition: %s\n\tFile Name: %s\n\tSize: %u bytes\n", firmwareName, partitionFileName, partitionHeaders[partitionIndex]->partitionSize);
     }
-    
-    for(i = 0; i < pacHeader.partitionCount; i++) {
-        if(partHeaders[i]->partitionSize == 0) {
-            free(partHeaders[i]);
+
+    for (int partitionIndex = 0; partitionIndex < firmwareHeader.partitionCount; partitionIndex++) {
+        if (partitionHeaders[partitionIndex]->partitionSize == 0) {
+            free(partitionHeaders[partitionIndex]);
             continue;
         }
-        lseek(fd, partHeaders[i]->partitionAddrInPac, SEEK_SET);
-        getString(partHeaders[i]->fileName, buffer);
 
-        char outputPath[512];
-        snprintf(outputPath, sizeof(outputPath), "%s/%s", destination, buffer);
+        lseek(firmwareFile, partitionHeaders[partitionIndex]->partitionAddrInPac, SEEK_SET);
+        getString(partitionHeaders[partitionIndex]->fileName, partitionFileName);
 
-        // Check if the file already exists
-        if (access(outputPath, F_OK) == 0) {
-            printf("Error: File '%s' already exists. Extraction aborted.\n", outputPath);
+        char outputFilePath[512];
+        snprintf(outputFilePath, sizeof(outputFilePath), "%s/%s", outputDirectory, partitionFileName);
+
+        if (access(outputFilePath, F_OK) == 0) {
+            printf("Error: The file '%s' already exists. Extraction aborted.\n", outputFilePath);
+            free(partitionHeaders[partitionIndex]);
+            free(partitionHeaders);
+            close(firmwareFile);
             exit(EXIT_FAILURE);
         }
 
-        // Open a new file for writing the extracted partition data
-        int fd_new = open(outputPath, O_WRONLY | O_CREAT, 0666);
-        printf("Extract %s\n", outputPath);
-
-        uint32_t dataSizeLeft = partHeaders[i]->partitionSize;
-        while(dataSizeLeft > 0) {
-            uint32_t copyLength = (dataSizeLeft > 256) ? 256 : dataSizeLeft;
-            dataSizeLeft -= copyLength;
-            rb = read(fd, buffer, copyLength);
-            if(rb != copyLength) {
-                printf("Error: Failed to extract partition data.\n");
-                exit(EXIT_FAILURE);
-            }
-            rb = write(fd_new, buffer, copyLength);
-            if(rb != copyLength) {
-                printf("Error: Failed to write partition data.\n");
-                exit(EXIT_FAILURE);
-            }
-            printf("\r\t%02lu%%", (uint64_t)100 - (uint64_t)100*dataSizeLeft/partHeaders[i]->partitionSize);
+        int outputFile = open(outputFilePath, O_WRONLY | O_CREAT, 0666);
+        if (outputFile == -1) {
+            perror("Error: Failed to create the output file");
+            free(partitionHeaders[partitionIndex]);
+            free(partitionHeaders);
+            close(firmwareFile);
+            exit(EXIT_FAILURE);
         }
-        printf("\n");
-        close(fd_new);
-        free(partHeaders[i]);
+
+        printf("Extracting: %s\n", outputFilePath);
+        uint32_t remainingDataSize = partitionHeaders[partitionIndex]->partitionSize;
+        while (remainingDataSize > 0) {
+            uint32_t chunkSize = (remainingDataSize > 256) ? 256 : remainingDataSize;
+            remainingDataSize -= chunkSize;
+            if (read(firmwareFile, firmwareName, chunkSize) != chunkSize) {
+                perror("Error: Failed to read partition data");
+                close(outputFile);
+                free(partitionHeaders[partitionIndex]);
+                free(partitionHeaders);
+                close(firmwareFile);
+                exit(EXIT_FAILURE);
+            }
+            if (write(outputFile, firmwareName, chunkSize) != chunkSize) {
+                perror("Error: Failed to write partition data");
+                close(outputFile);
+                free(partitionHeaders[partitionIndex]);
+                free(partitionHeaders);
+                close(firmwareFile);
+                exit(EXIT_FAILURE);
+            }
+            printf("\r\tProgress: %02lu%%", (uint64_t)100 - (uint64_t)100 * remainingDataSize / partitionHeaders[partitionIndex]->partitionSize);
+        }
+        close(outputFile);
+        free(partitionHeaders[partitionIndex]);
     }
-    free(partHeaders);
-    close(fd);
-    
+
+    free(partitionHeaders);
+    close(firmwareFile);
+    printf("All partitions extracted successfully.\n");
     return EXIT_SUCCESS;
 }
