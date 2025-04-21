@@ -122,9 +122,17 @@ int main(int argc, char** argv) {
 
         char outputPath[512];
         snprintf(outputPath, sizeof(outputPath), "%s/%s", destination, buffer);
-        remove(outputPath);
+
+        // Check if the file already exists
+        if (access(outputPath, F_OK) == 0) {
+            printf("Error: File '%s' already exists. Extraction aborted.\n", outputPath);
+            exit(EXIT_FAILURE);
+        }
+
+        // Open a new file for writing the extracted partition data
         int fd_new = open(outputPath, O_WRONLY | O_CREAT, 0666);
         printf("Extract %s\n", outputPath);
+
         uint32_t dataSizeLeft = partHeaders[i]->partitionSize;
         while(dataSizeLeft > 0) {
             uint32_t copyLength = (dataSizeLeft > 256) ? 256 : dataSizeLeft;
