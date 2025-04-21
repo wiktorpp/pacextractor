@@ -50,21 +50,27 @@ void getString(int16_t* baseString, char* resString) {
 
 int main(int argc, char** argv) {
     if(argc < 2) {
-        printf("Usage:\n  capextractor <firmware_file>.pac\n");
+        printf("Usage:\n  capextractor <firmware_file>.pac [destination_directory]\n");
         exit(EXIT_FAILURE);
     }
-    
+
+    const char* destination = (argc >= 3) ? argv[2] : ".";
+    struct stat st;
+    if (stat(destination, &st) == -1 || !S_ISDIR(st.st_mode)) {
+        printf("Error: Destination '%s' is not a valid directory.\n", destination);
+        exit(EXIT_FAILURE);
+    }
+
     int fd = open(argv[1], O_RDONLY);
     if (fd == -1) {
         printf("Error: Unable to open file '%s'. Please check if the file exists.\n", argv[1]);
         exit(EXIT_FAILURE);
     }
     
-    // fseek(fd, 0, SEEK_END);
-    // int firmwareSize = (fd);
-    // fseek(fd, 0, SEEK_SET);
-    struct stat st;
-    stat(argv[1], &st);
+    if (stat(argv[1], &st) == -1) {
+        printf("Error: Unable to stat file '%s'.\n", argv[1]);
+        exit(EXIT_FAILURE);
+    }
     int firmwareSize = st.st_size;
     if(firmwareSize < sizeof(PacHeader)) {
         printf("Error: The file '%s' is too small to be a valid firmware file. Please check the file.\n", argv[1]);
@@ -113,9 +119,12 @@ int main(int argc, char** argv) {
         }
         lseek(fd, partHeaders[i]->partitionAddrInPac, SEEK_SET);
         getString(partHeaders[i]->fileName, buffer);
-        remove(buffer);
-        int fd_new = open(buffer, O_WRONLY | O_CREAT, 0666);
-        printf("Extract %s\n", buffer);
+
+        char outputPath[512];
+        snprintf(outputPath, sizeof(outputPath), "%s/%s", destination, buffer);
+        remove(outputPath);
+        int fd_new = open(outputPath, O_WRONLY | O_CREAT, 0666);
+        printf("Extract %s\n", outputPath);
         uint32_t dataSizeLeft = partHeaders[i]->partitionSize;
         while(dataSizeLeft > 0) {
             uint32_t copyLength = (dataSizeLeft > 256) ? 256 : dataSizeLeft;
@@ -130,7 +139,7 @@ int main(int argc, char** argv) {
                 printf("Error: Failed to write partition data.\n");
                 exit(EXIT_FAILURE);
             }
-            printf("\r\t%02d%%", (uint64_t)100 - (uint64_t)100*dataSizeLeft/partHeaders[i]->partitionSize);
+            printf("\r\t%02lu%%", (uint64_t)100 - (uint64_t)100*dataSizeLeft/partHeaders[i]->partitionSize);
         }
         printf("\n");
         close(fd_new);
